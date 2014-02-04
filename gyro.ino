@@ -188,7 +188,7 @@ void waveAt(uint8_t hue, uint8_t pos, uint8_t rlenght, uint8_t saturation=255){
 // rlenght - "длина волны"
 // насыщенность
 void shineAt3(uint8_t hue, uint8_t pos, uint8_t saturation=255){
-    if (pos > NUM_LEDS) return;
+    if (pos >= NUM_LEDS) return;
     for(uint16_t i=0; i < NUM_LEDS;i++){
         leds[i] = CRGB::Black;
     }
