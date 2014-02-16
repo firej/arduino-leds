@@ -345,6 +345,6 @@ void loop() {
 //    rainbowWheel(3, 20);
 //    wave(200, 0.5, 20);
 //    waveAt(200, i, 10);
-    shineAt3((uint8_t)((gravity.y + 1.0)*128), (int)(gravity.x * NUM_LEDS));
+    shineAt3((uint8_t)((gravity.y + 1.0)*128), (int)((gravity.x + 1.0)/2.0 * NUM_LEDS));
     FastLED.show();
 }
