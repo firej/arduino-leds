@@ -1,10 +1,8 @@
 // FastLED includes
 #include <FastLED.h>
 
-// gyroscope includes
-#include "I2Cdev.h"
-#include "MPU6050_6Axis_MotionApps20.h"
-#include "Wire.h"
+#include <Wire.h>
+#include "./mpu.h"
 
 #define DEBUG
 #define DEBUG_GYRO
@@ -12,86 +10,62 @@
 #define DEBUG_BT
 
 
-#define NUM_LEDS 10
+#define NUM_LEDS       181
+#define NUM_LEDS_H1    0
+#define NUM_LEDS_H2    90
+#define NUM_LEDS_Q1    0
+#define NUM_LEDS_Q2    45
+#define NUM_LEDS_Q3    90
+#define NUM_LEDS_Q4    135
+//#define NUM_LEDS       21
+//#define NUM_LEDS_H1    0
+//#define NUM_LEDS_H2    10
+//#define NUM_LEDS_Q1    0
+//#define NUM_LEDS_Q2    5
+//#define NUM_LEDS_Q3    10
+//#define NUM_LEDS_Q4    15
+
+#define MODE_RAINBOW           0
+#define MODE_GYRO_RAINBOW      1
+#define MODE_WAVE              2
+#define MODE_GYRO_WAVE1        3
+#define MODE_POLICE_FLASH      4
+#define MODE_STROB             5
+
+#define MODE_TERMOMETER        64    // Этот режим будем включать только вручную
+
+#define MODE_COUNT             6
+
+#define MAX_CHANGE_STEPS       50
+
 CRGB leds[NUM_LEDS];
 
+unsigned char mode = MODE_TERMOMETER;
 
-MPU6050 gyro;
-// MPU control/status vars
-bool dmpReady = false;  // set true if DMP init was successful
-uint8_t mpuIntStatus;   // holds actual interrupt status byte from MPU
-uint8_t devStatus;      // return status after each device operation (0 = success, !0 = error)
-uint16_t packetSize;    // expected DMP packet size (default is 42 bytes)
-uint16_t fifoCount;     // count of all bytes currently in FIFO
-uint8_t fifoBuffer[64]; // FIFO storage buffer
-// orientation/motion vars
-Quaternion q;           // [w, x, y, z]         quaternion container
-VectorInt16 aa;         // [x, y, z]            accel sensor measurements
-VectorInt16 aaReal;     // [x, y, z]            gravity-free accel sensor measurements
-VectorInt16 aaWorld;    // [x, y, z]            world-frame accel sensor measurements
-VectorFloat gravity;    // [x, y, z]            gravity vector
-float euler[3];         // [psi, theta, phi]    Euler angle container
-float ypr[3];           // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
+const int buttonPin = 2;     // номер входа, подключенный к кнопке
+const int ledPin =  12;      // номер выхода светодиода
+bool checkButton(){
+    static int lastButtonState = 0;
+    int buttonState = 0;         // переменная для хранения состояния кнопки
+    // считываем значения с входа кнопки
+    buttonState = digitalRead(buttonPin);
 
-
-
-
-// ================================================================
-// ===               INTERRUPT DETECTION ROUTINE                ===
-// ================================================================
-
-volatile bool mpuInterrupt = false;     // indicates whether MPU interrupt pin has gone high
-void dmpDataReady() {
-    mpuInterrupt = true;
-}
-
-void initGyro(){
-    Wire.begin();
-    TWBR = 24; // 400kHz I2C clock (200kHz if CPU is 8MHz)
-
-    // NOTE: 8MHz or slower host processors, like the Teensy @ 3.3v or Ardunio
-    // Pro Mini running at 3.3v, cannot handle this baud rate reliably due to
-    // the baud timing being too misaligned with processor ticks. You must use
-    // 38400 or slower in these cases, or use some kind of external separate
-    // crystal solution for the UART timer.
-
-    // initialize device
-    gyro.initialize();
-
-    // verify connection
-    gyro.testConnection();
-
-    // load and configure the DMP
-    devStatus = gyro.dmpInitialize();
-
-    // supply your own gyro offsets here, scaled for min sensitivity
-    gyro.setXGyroOffset(220);
-    gyro.setYGyroOffset(76);
-    gyro.setZGyroOffset(-85);
-    gyro.setZAccelOffset(1788); // 1688 factory default for my test chip
-
-    // make sure it worked (returns 0 if so)
-    if (devStatus == 0) {
-        // turn on the DMP, now that it's ready
-        gyro.setDMPEnabled(true);
-
-        // enable Arduino interrupt detection
-        attachInterrupt(0, dmpDataReady, RISING);
-        mpuIntStatus = gyro.getIntStatus();
-
-        // set our DMP Ready flag so the main loop() function knows it's okay to use it
-        dmpReady = true;
-
-        // get expected DMP packet size for later comparison
-        packetSize = gyro.dmpGetFIFOPacketSize();
-    } else {
-        // ERROR!
-        // 1 = initial memory load failed
-        // 2 = DMP configuration updates failed
-        // (if it's going to break, usually the code will be 1)
-        Serial.print(F("DMP Initialization failed (code "));
-        Serial.print(devStatus);
-        Serial.println(F(")"));
+    // проверяем нажата ли кнопка
+    // если нажата, то buttonState будет HIGH:
+    if (buttonState == HIGH) {
+        digitalWrite(ledPin, HIGH);
+        if (lastButtonState == 0){
+            lastButtonState = 1;
+            return true;
+        }
+        else{
+            return false;
+        }
+    }
+    else {
+        digitalWrite(ledPin, LOW);
+        lastButtonState = 0;
+        return false;
     }
 }
 
@@ -113,53 +87,72 @@ bool blinkState = false;
 void setup() {
     initLEDS();
     initSerial();
-    initGyro();
+    mpu_setup();
+    
+    // инициализируем пин, подключенный к кнопке, как вход
+    pinMode(buttonPin, INPUT);
+    pinMode(ledPin, OUTPUT);
     
     // configure Arduino LED for
     pinMode(LED_PIN, OUTPUT);
 }
 
-void set_led_flashing(int num){
-    for(int i=0; i < NUM_LEDS;i++){
-        if (i == num){
-            leds[i] = CRGB::White;
-        }
-        else if ((i+1)%NUM_LEDS == num){
-            leds[i] = CRGB(128,128,128);
-        }
-        else if ((i+2)%NUM_LEDS == num){
-            leds[i] = CRGB(64,64,64);
-        }
-        else{
-            leds[i] = CRGB::Black;
-        }
-    }
-}
+//void set_led_flashing(int num){
+//    for(int i=0; i < NUM_LEDS;i++){
+//        if (i == num){
+//            leds[i] = CRGB::White;
+//        }
+//        else if ((i+1)%NUM_LEDS == num){
+//            leds[i] = CRGB(128,128,128);
+//        }
+//        else if ((i+2)%NUM_LEDS == num){
+//            leds[i] = CRGB(64,64,64);
+//        }
+//        else{
+//            leds[i] = CRGB::Black;
+//        }
+//    }
+//}
 
 // Создает движущуюся "радугу"
 // rspeed - скорость движения радуги
-// rlenght - "длина волны" - количество диодов охватывающее весь спектр
+// rlength - "длина волны" - количество диодов охватывающее весь спектр
 // насыщенность и яркость - понятно что
-void rainbowWheel(uint8_t rspeed, uint8_t rlenght, uint8_t saturation=255, uint8_t britness=255){
-    static uint8_t shift = 0;
-    shift = (shift + rspeed) & 0xFF;
-    for(uint16_t i=0; i < NUM_LEDS;i++){
-        leds[i] = CHSV( ((i << 8)/rlenght + shift) & 0xFF, saturation, britness);
+// Двухсторонняя направленна и круговая последовательная версии
+void rainbowWheel2(float rspeed, uint8_t rlength, uint8_t saturation=255, uint8_t britness=255){
+    static float shift = 0;
+    const float speed_delimiter = 2.0;
+    shift += rspeed / speed_delimiter;
+    uint16_t i=0;
+    for(; i < NUM_LEDS_H2;i++){
+        leds[i] = CHSV( ((i << 8)/rlength + (int)shift) & 0xFF, saturation, britness);
+    }
+    for(; i < NUM_LEDS;i++){
+        leds[NUM_LEDS - (i - NUM_LEDS_H2 + 1)] = CHSV( ((i << 8)/rlength + (int)shift) & 0xFF, saturation, britness);
+    }
+}
+void rainbowWheel(float rspeed, uint8_t rlength, uint8_t saturation=255, uint8_t britness=255){
+    static float shift = 0;
+    const float speed_delimiter = 2.0;
+    shift += rspeed / speed_delimiter;
+    uint16_t i=0;
+    for(; i < NUM_LEDS;i++){
+        leds[i] = CHSV( ((i << 8)/rlength + (int)shift) & 0xFF, saturation, britness);
     }
 }
 
 // Создает движущуюся волну одного оттенка
 // hue - оттенок
 // rspeed - скорость движения радуги
-// rlenght - "длина волны"
+// rlength - "длина волны"
 // насыщенность
-void wave(uint8_t hue, float rspeed, uint8_t rlenght, uint8_t saturation=255){
+void wave(uint8_t hue, float rspeed, uint8_t rlength, uint8_t saturation=255){
     static float shift = 0;
     shift += rspeed;
-    if (shift > rlenght) shift -= rlenght;
+    if (shift > rlength) shift -= rlength;
     for(uint16_t i=0; i < NUM_LEDS;i++){
         static uint16_t brit;
-        brit = ((int)(((i + shift) * 512.0) / rlenght)) & 0x1FF;
+        brit = ((int)(((i + shift) * 512.0) / rlength)) & 0x1FF;
         if (brit & 0x100) brit = 511 - brit;
         leds[i] = CHSV( hue, saturation, brit);
     }
@@ -168,24 +161,24 @@ void wave(uint8_t hue, float rspeed, uint8_t rlenght, uint8_t saturation=255){
 // Создает волну на позиции
 // hue - оттенок
 // rspeed - скорость движения радуги
-// rlenght - "длина волны"
+// rlength - "длина волны"
 // насыщенность
-void waveAt(uint8_t hue, uint8_t pos, uint8_t rlenght, uint8_t saturation=255){
+void waveAt(uint8_t hue, uint8_t pos, uint8_t rlength, uint8_t saturation=255){
     for(uint16_t i=0; i < NUM_LEDS;i++){
         leds[i] = CRGB::Black;
     }
-    for(uint16_t i = pos; i < NUM_LEDS && i < pos + rlenght/2; i++){
-        leds[i] = CHSV( hue, saturation, 255 - (int)(((i - pos)*255.0)/rlenght));
+    for(uint16_t i = pos; i < NUM_LEDS && i < pos + rlength/2; i++){
+        leds[i] = CHSV( hue, saturation, 255 - (int)(((i - pos)*255.0)/rlength));
     }
-    for(int i = pos; i >= 0 && i > pos - rlenght/2; i--){
-        leds[i] = CHSV( hue, saturation, 255 - (int)(((pos - i)*255.0)/rlenght));
+    for(int i = pos; i >= 0 && i > pos - rlength/2; i--){
+        leds[i] = CHSV( hue, saturation, 255 - (int)(((pos - i)*255.0)/rlength));
     }
 }
 
 // Создает волну на позиции
 // hue - оттенок
 // rspeed - скорость движения радуги
-// rlenght - "длина волны"
+// rlength - "длина волны"
 // насыщенность
 void shineAt3(uint8_t hue, uint8_t pos, uint8_t saturation=255){
     if (pos >= NUM_LEDS) return;
@@ -196,155 +189,152 @@ void shineAt3(uint8_t hue, uint8_t pos, uint8_t saturation=255){
     if (pos > 0) leds[pos - 1] = CHSV( hue, saturation, 128);
     if (pos < NUM_LEDS - 1) leds[pos + 1] = CHSV( hue, saturation, 128);
 }
-
-
-//#define OUTPUT_READABLE_QUATERNION
-//#define OUTPUT_READABLE_EULER
-//#define OUTPUT_READABLE_YAWPITCHROLL
-//#define OUTPUT_READABLE_REALACCEL
-//#define OUTPUT_READABLE_WORLDACCEL
-#define OUTPUT_GRAVITY
-
-
-// Получаем данные с гироскопа
-void refreshGyroData(){
-    // if programming failed, don't try to do anything
-    if (!dmpReady) return;
-
-    // wait for MPU interrupt or extra packet(s) available
-    while (!mpuInterrupt && fifoCount < packetSize) {
-        // other program behavior stuff here
-        // .
-        // .
-        // .
-        // if you are really paranoid you can frequently test in between other
-        // stuff to see if mpuInterrupt is true, and if so, "break;" from the
-        // while() loop to immediately process the MPU data
-        // .
-        // .
-        // .
+// Создает волну на позиции
+// hue - оттенок
+// rspeed - скорость движения радуги
+// rlength - "длина волны"
+// насыщенность
+void shine(uint8_t hue, uint8_t pos, uint8_t rlength, uint8_t saturation=255){
+    int i;
+    for(i = 0; i < NUM_LEDS;i++){
+        leds[i] = CRGB::Black;
     }
-
-    // reset interrupt flag and get INT_STATUS byte
-    mpuInterrupt = false;
-    mpuIntStatus = gyro.getIntStatus();
-
-    // get current FIFO count
-    fifoCount = gyro.getFIFOCount();
-
-    // check for overflow (this should never happen unless our code is too inefficient)
-    if ((mpuIntStatus & 0x10) || fifoCount == 1024) {
-        // reset so we can continue cleanly
-        gyro.resetFIFO();
-//        Serial.println(F("FIFO overflow!"));
-
-    // otherwise, check for DMP data ready interrupt (this should happen frequently)
-    } else if (mpuIntStatus & 0x02) {
-        // wait for correct available data length, should be a VERY short wait
-        while (fifoCount < packetSize) fifoCount = gyro.getFIFOCount();
-
-        // read a packet from FIFO
-        gyro.getFIFOBytes(fifoBuffer, packetSize);
-        
-        // track FIFO count here in case there is > 1 packet available
-        // (this lets us immediately read more without waiting for an interrupt)
-        fifoCount -= packetSize;
-
-        #ifdef OUTPUT_GRAVITY
-            // display Euler angles in degrees
-            gyro.dmpGetQuaternion(&q, fifoBuffer);
-            gyro.dmpGetGravity(&gravity, &q);
-            Serial.print("gravity:\t");
-            Serial.print(gravity.x);
-            Serial.print("\t");
-            Serial.print(gravity.y);
-            Serial.print("\t");
-            Serial.println(gravity.z);
-        #endif
-
-        #ifdef OUTPUT_READABLE_QUATERNION
-            // display quaternion values in easy matrix form: w x y z
-            gyro.dmpGetQuaternion(&q, fifoBuffer);
-            Serial.print("quat\t");
-            Serial.print(q.w);
-            Serial.print("\t");
-            Serial.print(q.x);
-            Serial.print("\t");
-            Serial.print(q.y);
-            Serial.print("\t");
-            Serial.println(q.z);
-        #endif
-
-        #ifdef OUTPUT_READABLE_EULER
-            // display Euler angles in degrees
-            gyro.dmpGetQuaternion(&q, fifoBuffer);
-            gyro.dmpGetEuler(euler, &q);
-            Serial.print("euler\t");
-            Serial.print(euler[0] * 180/M_PI);
-            Serial.print("\t");
-            Serial.print(euler[1] * 180/M_PI);
-            Serial.print("\t");
-            Serial.println(euler[2] * 180/M_PI);
-        #endif
-
-        #ifdef OUTPUT_READABLE_YAWPITCHROLL
-            // display Euler angles in degrees
-            gyro.dmpGetQuaternion(&q, fifoBuffer);
-            gyro.dmpGetGravity(&gravity, &q);
-            gyro.dmpGetYawPitchRoll(ypr, &q, &gravity);
-            Serial.print("ypr\t");
-            Serial.print(ypr[0] * 180/M_PI);
-            Serial.print("\t");
-            Serial.print(ypr[1] * 180/M_PI);
-            Serial.print("\t");
-            Serial.println(ypr[2] * 180/M_PI);
-        #endif
-
-        #ifdef OUTPUT_READABLE_REALACCEL
-            // display real acceleration, adjusted to remove gravity
-            gyro.dmpGetQuaternion(&q, fifoBuffer);
-            gyro.dmpGetAccel(&aa, fifoBuffer);
-            gyro.dmpGetGravity(&gravity, &q);
-            gyro.dmpGetLinearAccel(&aaReal, &aa, &gravity);
-            Serial.print("areal\t");
-            Serial.print(aaReal.x);
-            Serial.print("\t");
-            Serial.print(aaReal.y);
-            Serial.print("\t");
-            Serial.println(aaReal.z);
-        #endif
-
-        #ifdef OUTPUT_READABLE_WORLDACCEL
-            // display initial world-frame acceleration, adjusted to remove gravity
-            // and rotated based on known orientation from quaternion
-            gyro.dmpGetQuaternion(&q, fifoBuffer);
-            gyro.dmpGetAccel(&aa, fifoBuffer);
-            gyro.dmpGetGravity(&gravity, &q);
-            gyro.dmpGetLinearAccel(&aaReal, &aa, &gravity);
-            gyro.dmpGetLinearAccelInWorld(&aaWorld, &aaReal, &q);
-            Serial.print("aworld\t");
-            Serial.print(aaWorld.x);
-            Serial.print("\t");
-            Serial.print(aaWorld.y);
-            Serial.print("\t");
-            Serial.println(aaWorld.z);
-        #endif
+    for (i = 0; i < rlength; i++){
+        int val = i + pos - rlength/2;
+        if (val > 0 && val < NUM_LEDS){
+            leds[i] = CHSV( hue, saturation, 255 - abs(255 - i*510/rlength));
+        }
     }
 }
 
+// Эффект полицейской мигалки
+// Одна сторона мигает красным, вторая синим
+void policeFlash(uint16_t& animate_step){
+    const int flash_length = 24;
+    const int speed_delimeter = 4;
+    int local_step = animate_step / speed_delimeter;            // Замедление анимации
+    uint16_t i=0;
+    for( i = 0; i < NUM_LEDS ; i++){
+        leds[i] = CRGB::Black;
+    }
+    if (local_step % 2 == 0) return;
+    if (local_step < flash_length / 2 - 4){
+        for ( i = NUM_LEDS_Q1; i < NUM_LEDS_Q2; i++ ){
+            leds[i] = CRGB::Red;
+        }
+        for ( i = NUM_LEDS_Q4; i < NUM_LEDS; i++ ){
+            leds[i] = CRGB::Red;
+        }
+    }
+    
+    if (local_step > flash_length / 2 && local_step < flash_length - 4){
+        for ( i = NUM_LEDS_Q2; i < NUM_LEDS_Q4; i++ ){
+            leds[i] = CRGB::Blue;
+        }
+    }
+    
+    animate_step = animate_step % (flash_length*speed_delimeter);
+}
 
+// Эффект стробоскопа
+void strob(uint16_t& animate_step){
+//    const int flash_length = 24;
+    const int speed_delimeter = 2;
+    int local_step = animate_step / speed_delimeter;            // Замедление анимации
+    uint16_t i=0;
+    if (local_step % 2 == 0){
+        for( i = 0; i < NUM_LEDS ; i++){
+            leds[i] = CRGB::Black;
+        }
+    }
+    else {
+        for( i = 0; i < NUM_LEDS ; i++){
+            leds[i] = CRGB::White;
+        }
+    }
+}
+
+// Показывает температуру
+void showTemperature(const int temp){
+    uint16_t i=0;
+    for( i = 0; i < NUM_LEDS ; i++){
+        leds[i] = CRGB::Black;
+    }
+    
+    for( i = 0; i < ((temp*NUM_LEDS_H2)/40) ; i++){
+        leds[i] = CRGB::Blue;
+    }
+    for( i = NUM_LEDS_H2; i < NUM_LEDS_H2 + ((temp*(NUM_LEDS - NUM_LEDS_H2))/40) ; i++){
+        leds[i] = CRGB::Blue;
+    }
+}
+
+void change(uint8_t &chg_step){
+    uint16_t i = 0;
+    uint8_t value = 255 - abs(255 - (chg_step*510/MAX_CHANGE_STEPS));
+    for( i = 0; i < NUM_LEDS ; i++){
+        leds[i] = CRGB(value,value,value);
+    }
+    chg_step--;
+}
+
+static uint16_t ani_step = 0;
+static uint8_t chg_step = 0;
 void loop() {
-    // blink LED to indicate activity
-    blinkState = !blinkState;
-    digitalWrite(LED_PIN, blinkState);
+// blink LED to indicate activity
+//    blinkState = !blinkState;
+//    digitalWrite(LED_PIN, blinkState);
 
-    refreshGyroData();
+    mpu_get();
+//    Serial.print(F("GYR:"));
+//    Serial.print(get_last_x_angle());
+//    Serial.print(F(","));
+//    Serial.print(get_last_y_angle());
+//    Serial.print(F(","));
+//    Serial.print(get_last_z_angle());
+//    Serial.println();
 
 //    Serial.println(( (double) gyro.getTemperature() + 12412.0) / 340.0);
+    if (checkButton()){
+        mode = (mode + 1) % MODE_COUNT;
+        chg_step = MAX_CHANGE_STEPS;
+    }
 
-//    rainbowWheel(3, 20);
-//    wave(200, 0.5, 20);
-//    waveAt(200, i, 10);
-    shineAt3((uint8_t)((gravity.y + 1.0)*128), (int)(gravity.x * NUM_LEDS));
+    if (chg_step){
+        change(chg_step);
+    }
+    else{
+        static uint8_t hue = 200;
+        switch(mode){
+        case MODE_RAINBOW:
+            rainbowWheel(6, 20);
+            break;
+        case MODE_GYRO_RAINBOW:
+            rainbowWheel2(get_last_y_angle(), 20 - (abs(get_last_x_angle())/9));
+            break;
+        case MODE_WAVE:
+            hue += get_last_x_angle() / 45.0;
+            wave(hue, get_last_y_angle()/30.0, 20);
+            break;
+        case MODE_GYRO_WAVE1:
+            hue += get_last_x_angle() / 45.0;
+            shine(hue, (int)((get_last_y_angle() + 90.0)/180.0 * NUM_LEDS), 5);
+            break;
+//        case MODE_GYRO_WAVE2:
+//            shineAt3((uint8_t)(((get_last_y_angle() + 90.0)/90.0)*128), (int)((get_last_x_angle() + 90.0)/180.0 * NUM_LEDS));
+//            break;
+        case MODE_POLICE_FLASH:
+            policeFlash(ani_step);
+            break;
+        case MODE_STROB:
+            strob(ani_step);
+            break;
+        case MODE_TERMOMETER:
+            showTemperature(get_last_temperature());
+            break;
+        }
+    }
     FastLED.show();
+    ani_step++;
+    delay(10);
 }
