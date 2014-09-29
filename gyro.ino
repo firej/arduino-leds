@@ -10,20 +10,20 @@
 #define DEBUG_BT
 
 
-#define NUM_LEDS       181
+// #define NUM_LEDS       181
+// #define NUM_LEDS_H1    0
+// #define NUM_LEDS_H2    90
+// #define NUM_LEDS_Q1    0
+// #define NUM_LEDS_Q2    45
+// #define NUM_LEDS_Q3    90
+// #define NUM_LEDS_Q4    135
+#define NUM_LEDS       21
 #define NUM_LEDS_H1    0
-#define NUM_LEDS_H2    90
+#define NUM_LEDS_H2    10
 #define NUM_LEDS_Q1    0
-#define NUM_LEDS_Q2    45
-#define NUM_LEDS_Q3    90
-#define NUM_LEDS_Q4    135
-//#define NUM_LEDS       21
-//#define NUM_LEDS_H1    0
-//#define NUM_LEDS_H2    10
-//#define NUM_LEDS_Q1    0
-//#define NUM_LEDS_Q2    5
-//#define NUM_LEDS_Q3    10
-//#define NUM_LEDS_Q4    15
+#define NUM_LEDS_Q2    5
+#define NUM_LEDS_Q3    10
+#define NUM_LEDS_Q4    15
 
 #define MODE_RAINBOW           0
 #define MODE_GYRO_RAINBOW      1
